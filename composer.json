@@ -1,0 +1,8 @@
+{
+    "require": {
+        "ext-curl": "*"
+    },
+    "require-dev": {
+        "eaglewu/swoole-ide-helper": "dev-master"
+    }
+}
