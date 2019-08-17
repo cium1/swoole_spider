@@ -11,11 +11,11 @@ $imageHost = 'hbimg.b0.upaiyun.com';
 $dir = __DIR__ . DIRECTORY_SEPARATOR . 'images/';
 
 //初始化管道
-$requestChan = new Chan(100);
-$parserChan = new Chan(100);
-$downloadChan = new Chan(100);
+$requestChan = new Chan(500);
+$parserChan = new Chan(500);
+$downloadChan = new Chan(500);
 
-//入口Url
+//入口开始
 go(function () use ($requestChan, $requestHost, $requestUrl) {
     $requestChan->push([
         'host' => $requestHost,
@@ -23,33 +23,38 @@ go(function () use ($requestChan, $requestHost, $requestUrl) {
     ]);
 });
 
-//Worker
-for ($i = 1; $i <= 100; $i++) {
+for ($p = 1; $p <= swoole_cpu_num() * 2; $p++) {
 
-    go(function () use ($requestChan, $parserChan) {
-        while (true) {
-            $data = $requestChan->pop();
-            get_html($data['host'], $data['url'], $parserChan);
+    $pro = new Swoole\Process(function (\Swoole\Process $worker) use ($requestChan, $parserChan, $downloadChan, $requestHost, $requestUrl, $dir, $imageHost) {
+
+        for ($w = 1; $w <= 100; $w++) {
+
+            go(function () use ($requestChan, $parserChan) {
+                while (true) {
+                    $data = $requestChan->pop();
+                    get_html($data['host'], $data['url'], $parserChan);
+                }
+            });
+
+            go(function () use ($parserChan, $requestChan, $downloadChan, $requestHost, $requestUrl) {
+                while (true) {
+                    $html = $parserChan->pop();
+                    parse($html, $downloadChan, $requestChan, $requestHost, $requestUrl);
+                }
+            });
+
+            go(function () use ($downloadChan, $dir, $imageHost, $worker) {
+                while (true) {
+                    download($downloadChan->pop(), $dir, $imageHost, $worker->pid);
+                }
+            });
         }
     });
 
-    go(function () use ($parserChan, $requestChan, $downloadChan, $requestHost, $requestUrl) {
-        while (true) {
-            $html = $parserChan->pop();
-            parse($html, $downloadChan, $requestChan, $requestHost, $requestUrl);
-        }
-    });
-
-    go(function () use ($downloadChan, $dir, $imageHost) {
-        while (true) {
-            download($downloadChan->pop(), $dir, $imageHost);
-        }
-    });
-
+    $pro->start();
 }
 
-//挂载
-swoole_event_wait();
+\Swoole\Process::wait();
 
 /**
  * 获取内容
@@ -76,8 +81,9 @@ function get_html(string $host, string $url, Chan $chan)
  * @param string $url       文件Url
  * @param string $dir       存储目录
  * @param string $imageHost 文件基础Url
+ * @param int    $pid       PID
  */
-function download(string $url, string $dir, string $imageHost)
+function download(string $url, string $dir, string $imageHost, int $pid)
 {
     if (!is_dir($dir)) {
         mkdir($dir);
@@ -91,7 +97,7 @@ function download(string $url, string $dir, string $imageHost)
         "User-Agent" => getUserAgent(),
     ]);
     $client->download(DIRECTORY_SEPARATOR . $url, $dir . $url . '.png');
-    echo sprintf("\r%s", $imageHost . DIRECTORY_SEPARATOR . $url);
+    echo sprintf("PID: %d, %s\n", $pid, $imageHost . DIRECTORY_SEPARATOR . $url);
 }
 
 /**
